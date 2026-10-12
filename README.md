@@ -4,6 +4,14 @@ A mobile-first group chat using HTML, CSS, JavaScript, Express, Socket.IO, and S
 
 ## Run
 
+## Android APK
+
+Download and share the Android app from [the InnerCircle download page](https://inner-circle-one-woad.vercel.app/download.html). Android 8.0 or newer and internet access are required. Open the downloaded APK, allow installation from that browser if Android asks, and tap Install. The app uses a separate device identity from Chrome; enter your name again on first launch.
+
+The Android source and signed release build instructions are in [android/README.md](android/README.md). Signing credentials are kept outside Git and in encrypted repository secrets. The published APK is universal across device CPU architectures. Native background push notifications are not included.
+
+## Run locally
+
 Use Node.js 22 or 24 and npm:
 
 ```powershell
