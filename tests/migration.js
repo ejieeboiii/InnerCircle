@@ -1,0 +1,41 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto');
+const {pathToFileURL}=require('node:url');
+const {createDatabase}=require('../lib/database'),{migrate}=require('../lib/schema');
+const {run}=require('../scripts/migrate-cloud');
+(async()=>{
+  const fixture=fs.mkdtempSync(path.join(os.tmpdir(),'innercircle-import-')),source=path.join(fixture,'original.db'),uploads=path.join(fixture,'uploads');fs.mkdirSync(uploads);
+  const db=createDatabase({url:'',token:'',filename:source});await migrate(db);
+  const image='11111111-1111-4111-8111-111111111111.png',deleted='22222222-2222-4222-8222-222222222222.mp4',orphan='33333333-3333-4333-8333-333333333333.jpg';
+  fs.writeFileSync(path.join(uploads,image),Buffer.from('image fixture'));fs.writeFileSync(path.join(uploads,deleted),Buffer.from('deleted fixture'));fs.writeFileSync(path.join(uploads,orphan),Buffer.from('archive fixture'));
+  await db.prepare('INSERT INTO devices (id,token_hash,member_name,joined_at) VALUES (?,?,?,?)').run('device','hashed-device-credential','Original member','2025-01-01');
+  await db.prepare('INSERT INTO messages (rowid,id,sender,kind,body,created_at,owner_id,deleted_at) VALUES (?,?,?,?,?,?,?,?)').run(7,'original','Original member','image','/uploads/'+image,'2025-01-01','device',null);
+  await db.prepare('INSERT INTO messages (rowid,id,sender,kind,body,created_at,owner_id,deleted_at) VALUES (?,?,?,?,?,?,?,?)').run(11,'deleted','Original member','video','/uploads/'+deleted,'2025-01-02','device','2025-01-03');
+  await db.prepare('INSERT INTO message_hidden VALUES (?,?)').run('original','device');
+  await db.prepare('INSERT INTO media_uploads VALUES (?,?,?)').run('/uploads/'+image,'device','image');
+  const salt=crypto.randomBytes(16).toString('hex'),hash=crypto.scryptSync(crypto.randomBytes(24),salt,64,{N:32768,r:8,p:1,maxmem:64*1024*1024}).toString('hex');
+  await db.prepare('INSERT INTO admin_accounts VALUES (?,?,?,?,?)').run('admin','Original Admin',salt,hash,'2025-01-01');
+  await db.prepare('INSERT INTO member_bans (device_id,banned_at,banned_by) VALUES (?,?,?)').run('device','2025-01-04','admin');
+  await db.prepare("INSERT INTO message_moderation (message_id,admin_id,action,created_at) VALUES (?,?,'delete',?)").run('deleted','admin','2025-01-03');
+  const before=await db.prepare('SELECT rowid AS cursor,* FROM messages ORDER BY rowid').all();db.close();
+  const previousArgs=process.argv,previousEnv={...process.env};
+  const target=path.join(fixture,'target.db');
+  process.env.TURSO_DATABASE_URL=pathToFileURL(target).href;process.env.TURSO_AUTH_TOKEN='isolated-test';process.env.BLOB_READ_WRITE_TOKEN='isolated-test';process.env.VERCEL='';
+  const objects=new Map();let puts=0;
+  const blobProvider={async get(name){const v=objects.get(name);return v?{stream:new ReadableStream({start(c){c.enqueue(v.bytes);c.close();}})}:null;},async put(name,bytes,options){assert.equal(options.access,'private');assert.equal(options.allowOverwrite,false);objects.set(name,{bytes:Buffer.from(bytes),contentType:options.contentType});puts++;},async head(name){const v=objects.get(name);assert(v);return {size:v.bytes.length,contentType:v.contentType};}};
+  try{
+    process.argv=['node','migrate','--apply','--source',source,'--uploads',uploads,'--backup-dir',path.join(fixture,'backups')];
+    await run({blobProvider});assert.equal(puts,2);assert(!objects.has('media/'+deleted));
+    const imported=createDatabase();
+    assert.deepEqual(await imported.prepare('SELECT rowid AS cursor,* FROM messages ORDER BY rowid').all(),before);
+    assert.equal((await imported.prepare('SELECT * FROM admin_accounts').get()).password_hash,hash);
+    for(const table of ['message_hidden','media_uploads','member_bans','message_moderation'])assert.equal((await imported.prepare('SELECT count(*) n FROM '+table).get()).n,1);
+    assert.equal((await imported.prepare('SELECT count(*) n FROM media_objects').get()).n,2);
+    imported.close();
+    await run({blobProvider});assert.equal(puts,2);
+    const unchanged=createDatabase({url:'',token:'',filename:source});assert.deepEqual(await unchanged.prepare('SELECT rowid AS cursor,* FROM messages ORDER BY rowid').all(),before);
+    assert.equal((await unchanged.prepare('SELECT count(*) n FROM media_objects').get()).n,0);
+    await unchanged.prepare('INSERT INTO messages (id,sender,kind,body,created_at) VALUES (?,?,?,?,?)').run('new','Member','text','Later message','2025-01-05');unchanged.close();
+    await assert.rejects(()=>run({blobProvider}),/populated/);
+    console.log('PASS cloud import preserves row IDs, credentials, history, hiding and moderation; private media migration, repeat safety, original preservation, and populated-target refusal');
+  }finally{process.argv=previousArgs;for(const key of Object.keys(process.env))if(!(key in previousEnv))delete process.env[key];Object.assign(process.env,previousEnv);}
+})().catch(error=>{console.error(error);process.exitCode=1;});

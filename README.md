@@ -4,7 +4,7 @@ A mobile-first group chat using HTML, CSS, JavaScript, Express, Socket.IO, and S
 
 ## Run
 
-Use Node.js 20+ and npm:
+Use Node.js 22 or 24 and npm:
 
 ```powershell
 npm install
@@ -12,6 +12,10 @@ npm start
 ```
 
 Open http://localhost:3000. On the same Wi-Fi, use http://YOUR_COMPUTER_LAN_IP:3000 on another phone, allowing port 3000 through the firewall. Use persistent storage and HTTPS for a hosted deployment. Restart the server and reload existing browser tabs after upgrading.
+
+## Vercel deployment
+
+See [VERCEL_DEPLOYMENT.md](VERCEL_DEPLOYMENT.md) for Turso, private Blob storage, existing-history migration, and deployment checks. Cloud credentials are required; local files are not persistent storage on Vercel.
 
 ## Initial admin setup
 
@@ -61,7 +65,7 @@ Shared deletion is a soft deletion. Original database content and files remain s
 
 Admin passwords use a per-account random 16-byte salt and a 64-byte hash produced by Node's built-in [crypto.scrypt](https://nodejs.org/api/crypto.html#cryptoscryptpassword-salt-keylen-options-callback), with N=32768, r=8, p=1. Password checks use a timing-safe comparison. Password hashes, salts, session token hashes, and moderation actor account IDs are not exposed through public APIs.
 
-Both device credentials and admin session tokens are random 256-bit values in HttpOnly, SameSite=Strict cookies; SQLite stores hashes of the bearer tokens. Admin sessions expire after eight hours and are bound to the device credential. Logging in again rotates the admin session for that device. Admin permissions are rechecked on every protected HTTP request and Socket.IO action; expired sockets are disconnected within 30 seconds, and expiration blocks privileged actions immediately. Admin action CSRF tokens live only in page memory. JSON-only login, request-origin checks, CSRF validation, and a persistent five-attempt/15-minute per-IP login limit help protect login and management actions.
+Both device credentials and admin session tokens are random 256-bit values in HttpOnly, SameSite=Strict cookies; SQLite stores hashes of the bearer tokens. Admin sessions expire after eight hours and are bound to the device credential. Logging in again rotates the admin session for that device. Admin permissions are rechecked on every protected HTTP request and Socket.IO action; expired sockets are disconnected during the periodic access check (normally within 20 seconds), and expiration blocks privileged actions immediately. Admin action CSRF tokens live only in page memory. JSON-only login, request-origin checks, CSRF validation, and a persistent five-attempt/15-minute per-IP login limit help protect login and management actions.
 
 Production requires HTTPS. Set `NODE_ENV=production`; the app refuses admin login over plain HTTP and sets Secure cookies. For a TLS-terminating reverse proxy, set `INNERCIRCLE_TRUST_PROXY` to the specific trusted proxy IP/subnet (for example `loopback` only for a proxy on the same host), preserve the original Host header, overwrite forwarded headers correctly, set X-Forwarded-Proto, and forward WebSocket upgrades. Express explains how [trusted proxies affect request IP and protocol](https://expressjs.com/en/guide/behind-proxies/). Development on localhost uses HTTP cookies for local testing. Do not expose that HTTP setup to the internet.
 
@@ -88,9 +92,11 @@ Startup applies additive, idempotent SQLite migrations. Back up `data` and `uplo
 
 ## Validation
 
-Run `npm test`. Both suites use temporary databases and local servers; they do not alter your real chat data. No new dependency was added.
+Run `npm test`. The suites use temporary databases and local servers; they do not alter your real chat data. The build bundles the official Blob upload client. Cloud integration adds the official libSQL and Vercel Blob SDKs.
 
 `tests/deletion.js` checks original-schema migration, text/image/video personal hiding, unauthorized deletion rejection, shared placeholders, protected media, reconnects, and persistence across restart. `tests/admin.js` checks migration from the deletion schema (including device hashes, hidden preferences, and uploads), admin hashing/login/throttling, HTTP and Socket.IO permissions, forged roles/cross-device session misuse, origin/CSRF checks, distinct online identities, full-history pagination, moderation/audit records, multi-tab removal, banned endpoint/reconnect rejection, unban, persistence without bootstrap secrets, logout/replayed-token rejection, expiry, and production HTTPS/Secure cookies. The video fixture validates transport and access control rather than codec playback.
 
 Manual browser validation used separate `127.0.0.1` and `localhost` identities on an isolated server. It covered regular entry/member lists, admin login, moderation and reload persistence, immediate removal notice and banned reload, unban and resumed messaging, admin participation, and logout. Login and dashboard layouts were checked at a 320px viewport with no horizontal document overflow. Proof screenshots are in `output/admin-browser/`.
 "# InnerCircle" 
+
+Cloud mode adds durable realtime_events, presence leases, media_objects, and upload_tickets tables. The migration tool also tracks completed imports in migration_imports. tests/cloud.js checks synchronization between two isolated servers and private-media provider fixtures; tests/migration.js checks preserved records, media transfer, repeat imports, and refusal to overwrite populated destinations. Live cloud resources require separate deployment verification.

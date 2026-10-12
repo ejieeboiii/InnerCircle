@@ -1,1 +1,31 @@
-{"name":"innercircle","version":"1.0.0","private":true,"type":"commonjs","scripts":{"start":"node server.js","dev":"node --watch server.js","test":"node tests/deletion.js && node tests/admin.js"},"dependencies":{"express":"^4.21.2","socket.io":"^4.8.1","better-sqlite3":"^11.8.1","multer":"^1.4.5-lts.1"}}
+{
+  "name": "innercircle",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node tests/deletion.js && node tests/admin.js && node tests/cloud.js && node tests/migration.js",
+    "build": "node scripts/build.js",
+    "prestart": "npm run build",
+    "pretest": "npm run build",
+    "migrate:cloud": "node scripts/migrate-cloud.js",
+    "predev": "npm run build"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.18.0",
+    "@vercel/blob": "^2.8.1",
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "socket.io-client": "^4.8.4"
+  },
+  "engines": {
+    "node": "22.x || 24.x"
+  }
+}

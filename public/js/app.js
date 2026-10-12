@@ -5,6 +5,7 @@ let socket,selected,memberAction;
 let role='user',csrf='',accessRevoked=false,loggingOut=false,startVersion=0;
 let syncing=false,pending=[],memberData=null,adminMemberData=null,nextBefore=null,moderationLoaded=false;
 let moderationLoading=false,moderationPending=[];
+let mediaMode='local';
 const history=new Map(),moderationHistory=new Map();
 function saveCache(){if(!accessRevoked)localStorage.setItem('innercircle-cache',JSON.stringify([...history.values()].slice(-100)));}
 function stopMedia(element){element?.querySelectorAll('video').forEach(v=>{v.pause();v.removeAttribute('src');v.load();});}
@@ -117,8 +118,10 @@ async function start(){
   screen('chat');
   if(!history.size)try{JSON.parse(localStorage.getItem('innercircle-cache')||'[]').forEach(addMessage);}catch{}
   await syncHistory();if(accessRevoked || version!==startVersion)return;
-  socket=io();const current=socket;
+  socket=io({transports:['websocket']});const current=socket;
+  current.on('chat-error',data=>alert(data.message));
   current.on('connect',()=>{
+    api('/api/config').then(data=>{mediaMode=data.mediaMode;}).catch(()=>{});
     current.timeout(8000).emit('join',name,(err,result)=>{
       if(result?.banned){removed();return;}
       if(err || result?.error)$('status').textContent=result?.error || 'Unable to join — reload to retry';
@@ -226,7 +229,16 @@ $('media').addEventListener('change',async e=>{
   const file=e.target.files[0];if(!file)return;
   if(file.size>20*1024*1024){alert('Maximum file size is 20 MB');e.target.value='';return;}
   const form=new FormData();form.append('media',file);
-  try{if(!socket?.connected || accessRevoked)throw Error('Connect before uploading media.');const data=await api('/api/upload',{method:'POST',body:form});if(socket?.connected&&!accessRevoked)socket.emit('chat-message',{kind:data.kind,body:data.url});}
+  try{
+    if(!socket?.connected || accessRevoked)throw Error('Connect before uploading media.');
+    let data;
+    if(mediaMode==='blob'){
+      const ticket=await api('/api/uploads/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contentType:file.type,size:file.size})});
+      await InnerCircleMedia.upload(ticket.pathname,file,{access:'private',contentType:file.type,handleUploadUrl:'/api/blob/upload',clientPayload:JSON.stringify({id:ticket.id}),multipart:file.size>4*1024*1024});
+      data=await api('/api/uploads/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:ticket.id})});
+    }else data=await api('/api/upload',{method:'POST',body:form});
+    if(socket?.connected&&!accessRevoked)socket.emit('chat-message',{kind:data.kind,body:data.url});
+  }
   catch(err){alert(err.message);}finally{e.target.value='';}
 });
 $('notify').addEventListener('click',async()=>{if('Notification' in window){const result=await Notification.requestPermission();alert(result==='granted'?'Notifications enabled while the app is running.':'Notifications not enabled.');}else alert('Notifications are not supported in this browser.');});
@@ -234,6 +246,7 @@ $('checkAccess').onclick=()=>location.reload();
 (async()=>{
   try {
     const state=await api('/api/session');if(state.banned){removed();return;}setRole(state);
+    mediaMode=(await api('/api/config')).mediaMode;
     if(role==='admin')name=state.name;
   }catch{}
   if(name)start();else loginView(false);

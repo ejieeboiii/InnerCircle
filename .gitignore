@@ -1,5 +1,9 @@
 node_modules/
-data/*.db*
+data/
+output/
 uploads/*
 !uploads/.gitkeep
 .env
+.env.*
+!.env.example
+public/js/blob-client.js
