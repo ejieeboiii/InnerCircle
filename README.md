@@ -2,8 +2,6 @@
 
 A mobile-first group chat using HTML, CSS, JavaScript, Express, Socket.IO, and SQLite. Regular users enter a display name; admins sign in with a password. No regular-user registration is required.
 
-## Run
-
 ## Android APK
 
 Download and share the Android app from [the InnerCircle download page](https://inner-circle-one-woad.vercel.app/download.html). Android 8.0 or newer and internet access are required. Open the downloaded APK, allow installation from that browser if Android asks, and tap Install. The app uses a separate device identity from Chrome; enter your name again on first launch.
