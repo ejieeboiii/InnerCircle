@@ -340,12 +340,22 @@ io.on('connection',socket=>{
     await realtime.publish('members');
   });
 });
+let initializationStage='storage';
 const ready=(async()=>{
   if(process.env.VERCEL && !storage.cloud)throw Error('Configure a private Blob store with BLOB_READ_WRITE_TOKEN before deployment.');
-  await migrate(db);await auth.initialize();await realtime.start();
+  for(let attempt=0;attempt<3;attempt++){
+    try{
+      initializationStage='schema';await migrate(db);
+      initializationStage='admin';await auth.initialize();
+      initializationStage='events';await realtime.start();return;
+    }catch(err){
+      if(attempt===2)throw err;
+      await new Promise(resolve=>setTimeout(resolve,500*(attempt+1)));
+    }
+  }
 })();
 module.exports=server;
 if(!process.env.VERCEL && require.main===module){
   ready.then(()=>server.listen(PORT,'0.0.0.0',()=>console.log(`InnerCircle running at http://localhost:${server.address().port}`)))
     .catch(err=>{console.error(err.message);db.close();process.exitCode=1;});
-}else ready.catch(()=>console.error('InnerCircle storage initialization failed. Check server environment configuration.'));
+}else ready.catch(err=>console.error('InnerCircle storage initialization failed.',{stage:initializationStage,code:/^[A-Z0-9_]+$/.test(err.code || '')?err.code:'UNAVAILABLE',cloudMedia:storage.cloud}));
