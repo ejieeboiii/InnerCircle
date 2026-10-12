@@ -5,7 +5,7 @@ let socket,selected,memberAction;
 let role='user',csrf='',accessRevoked=false,loggingOut=false,startVersion=0;
 let syncing=false,pending=[],memberData=null,adminMemberData=null,nextBefore=null,moderationLoaded=false;
 let moderationLoading=false,moderationPending=[];
-let mediaMode='local';
+let mediaMode='local',joined=false;
 const history=new Map(),moderationHistory=new Map();
 function saveCache(){if(!accessRevoked)localStorage.setItem('innercircle-cache',JSON.stringify([...history.values()].slice(-100)));}
 function stopMedia(element){element?.querySelectorAll('video').forEach(v=>{v.pause();v.removeAttribute('src');v.load();});}
@@ -109,7 +109,7 @@ async function syncHistory(){
   finally {syncing=false;if(!accessRevoked){pending.splice(0).forEach(([type,m])=>applyEvent(type,m));saveCache();}else pending=[];}
 }
 async function start(){
-  const version=++startVersion;socket?.disconnect();
+  const version=++startVersion;joined=false;socket?.disconnect();
   try {
     const state=await api('/api/session');if(version!==startVersion)return;
     if(state.banned){removed();return;}setRole(state);
@@ -121,14 +121,16 @@ async function start(){
   socket=io({transports:['websocket']});const current=socket;
   current.on('chat-error',data=>alert(data.message));
   current.on('connect',()=>{
+    joined=false;
     api('/api/config').then(data=>{mediaMode=data.mediaMode;}).catch(()=>{});
     current.timeout(8000).emit('join',name,(err,result)=>{
       if(result?.banned){removed();return;}
       if(err || result?.error)$('status').textContent=result?.error || 'Unable to join — reload to retry';
+      else if(current===socket && current.connected)joined=true;
     });
     $('status').textContent='Connected';syncHistory();
   });
-  current.on('disconnect',()=>{if(!accessRevoked)$('status').textContent='Offline';});
+  current.on('disconnect',()=>{if(current===socket)joined=false;if(!accessRevoked)$('status').textContent='Offline';});
   current.on('connect_error',err=>{if(err.data?.banned)removed();else $('status').textContent='Unable to connect — reload to retry';});
   current.on('online-count',n=>{$('status').textContent=`${n} member${n===1?'':'s'} online`;});
   current.on('members-updated',data=>{memberData=data;renderMembers(data,false);});
@@ -237,7 +239,14 @@ $('media').addEventListener('change',async e=>{
       await InnerCircleMedia.upload(ticket.pathname,file,{access:'private',contentType:file.type,handleUploadUrl:'/api/blob/upload',clientPayload:JSON.stringify({id:ticket.id}),multipart:file.size>4*1024*1024});
       data=await api('/api/uploads/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:ticket.id})});
     }else data=await api('/api/upload',{method:'POST',body:form});
-    if(socket?.connected&&!accessRevoked)socket.emit('chat-message',{kind:data.kind,body:data.url});
+    // A function deployment can end the socket while a direct upload is running.
+    // Wait for the replacement socket to finish joining rather than dropping the media.
+    const deadline=Date.now()+15000;
+    while(!accessRevoked && (!socket?.connected || !joined) && Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,100));
+    if(accessRevoked || !socket?.connected || !joined)throw Error('Upload finished, but chat could not reconnect. Reconnect and select the file again.');
+    await new Promise((resolve,reject)=>socket.timeout(15000).emit('chat-message',{kind:data.kind,body:data.url},(err,result)=>{
+      if(err || !result?.ok)reject(Error(result?.error || 'Message delivery could not be confirmed. Reconnect before retrying.'));else resolve();
+    }));
   }
   catch(err){alert(err.message);}finally{e.target.value='';}
 });
