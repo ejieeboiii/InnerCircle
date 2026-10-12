@@ -7,3 +7,5 @@ uploads/*
 .env.*
 !.env.example
 public/js/blob-client.js
+
+.vercel
