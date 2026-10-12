@@ -1,0 +1,75 @@
+name: Build InnerCircle APK
+on:
+  workflow_dispatch:
+    inputs:
+      initialize_signing:
+        description: Generate the first signing key only when no signing secrets exist
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      SIGNING_KEY_B64: ${{ secrets.ANDROID_SIGNING_KEY_B64 }}
+      SIGNING_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Prepare signing key
+        shell: bash
+        env:
+          INITIALIZE: ${{ inputs.initialize_signing }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/innercircle-signing"
+          key="$RUNNER_TEMP/innercircle-signing/release.jks"
+          if [[ -n "$SIGNING_KEY_B64" && -n "$SIGNING_PASSWORD" ]]; then
+            printf '%s' "$SIGNING_KEY_B64" | base64 --decode > "$key"
+            password="$SIGNING_PASSWORD"
+          elif [[ "$INITIALIZE" == 'true' && -z "$SIGNING_KEY_B64" && -z "$SIGNING_PASSWORD" ]]; then
+            password=$(openssl rand -hex 32)
+            echo "::add-mask::$password"
+            printf '%s' "$password" > "$RUNNER_TEMP/innercircle-signing/password.txt"
+            keytool -genkeypair -keystore "$key" -storetype JKS -alias innercircle -keyalg RSA -keysize 4096 -validity 10000 -storepass "$password" -keypass "$password" -dname "CN=InnerCircle, O=InnerCircle"
+            echo 'NEW_SIGNING_KEY=true' >> "$GITHUB_ENV"
+          else
+            echo 'Signing secrets are missing. Initialize once, preserve the backup, and configure repository signing secrets.' >&2
+            exit 1
+          fi
+          chmod 600 "$key"
+          echo "INNERCIRCLE_KEYSTORE=$key" >> "$GITHUB_ENV"
+          echo "INNERCIRCLE_KEY_PASSWORD=$password" >> "$GITHUB_ENV"
+      - name: Build and validate signed APK
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon assembleRelease lintRelease
+          mkdir -p ../dist
+          cp app/build/outputs/apk/release/app-release.apk ../dist/InnerCircle.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs ../dist/InnerCircle.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging ../dist/InnerCircle.apk
+          sha256sum ../dist/InnerCircle.apk > ../dist/InnerCircle.apk.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: InnerCircle-APK
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve initial private signing backup
+        if: env.NEW_SIGNING_KEY == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: InnerCircle-private-signing-backup
+          path: ${{ runner.temp }}/innercircle-signing/
+          if-no-files-found: error
+          retention-days: 7

@@ -9,3 +9,8 @@ uploads/*
 public/js/blob-client.js
 
 .vercel
+android/.gradle/
+android/**/build/
+android/local.properties
+*.jks
+*.keystore
