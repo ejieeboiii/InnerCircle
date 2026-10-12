@@ -65,11 +65,14 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 90
-      - name: Preserve initial private signing backup
+      - name: Encrypt initial signing backup
+        if: env.NEW_SIGNING_KEY == 'true'
+        run: node android/encrypt-signing-backup.cjs
+      - name: Preserve encrypted signing backup
         if: env.NEW_SIGNING_KEY == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: InnerCircle-private-signing-backup
-          path: ${{ runner.temp }}/innercircle-signing/
+          name: InnerCircle-encrypted-signing-backup
+          path: ${{ runner.temp }}/innercircle-encrypted-signing/
           if-no-files-found: error
           retention-days: 7
